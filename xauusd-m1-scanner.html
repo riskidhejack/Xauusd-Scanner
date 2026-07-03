@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>XAUUSD M1 Entry Scanner</title>
+<link rel="icon" href="data:,">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap');
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #12100D; }
+  input::placeholder { color: #55503F; }
+  .xg-field {
+    background: #1C1914; border: 1px solid #302A1F; color: #E9E4D8; border-radius: 4px;
+    padding: 9px 10px; font-family: 'JetBrains Mono', monospace; font-size: 14px; width: 100%; outline: none;
+    transition: border-color .15s ease;
+  }
+  .xg-field:focus { border-color: #D4AF37; }
+  select.xg-field { font-family: 'Inter', sans-serif; font-size: 13px; }
+  .xg-label { font-family: 'Oswald', sans-serif; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: #9C9384; margin-bottom: 6px; display: block; }
+  .xg-group-title { font-family: 'Oswald', sans-serif; font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: #D4AF37; border-bottom: 1px solid #302A1F; padding-bottom: 8px; margin-bottom: 14px; }
+  .xg-spin { animation: xg-spin .8s linear infinite; }
+  @keyframes xg-spin { from { transform: rotate(0deg);} to { transform: rotate(360deg);} }
+  @media (max-width: 860px) { .xg-layout { grid-template-columns: 1fr !important; } }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<script type="text/babel" data-presets="react">
+const { useState, useMemo } = React;
+
+const CANDLE_PATTERNS = [
+  { value: "none", label: "Tidak ada / belum jelas", score: 0 },
+  { value: "bullish_engulfing", label: "Bullish Engulfing", score: 16 },
+  { value: "hammer", label: "Hammer / Pin Bar Bawah", score: 14 },
+  { value: "bearish_engulfing", label: "Bearish Engulfing", score: -16 },
+  { value: "shooting_star", label: "Shooting Star / Pin Bar Atas", score: -14 },
+  { value: "doji", label: "Doji (ragu-ragu)", score: 0 },
+];
+
+function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+function fmt(n, d = 2) {
+  if (n === null || n === undefined || Number.isNaN(n)) return "-";
+  return n.toLocaleString("id-ID", { minimumFractionDigits: d, maximumFractionDigits: d });
+}
+
+// --- lightweight inline icons (no external icon package needed) ---
+const Icon = ({ children, size = 16, color = "currentColor", style }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2"
+       strokeLinecap="round" strokeLinejoin="round" style={style}>{children}</svg>
+);
+const TrendingUp = (p) => <Icon {...p}><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></Icon>;
+const TrendingDown = (p) => <Icon {...p}><polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/><polyline points="17 18 23 18 23 12"/></Icon>;
+const MinusIcon = (p) => <Icon {...p}><line x1="5" y1="12" x2="19" y2="12"/></Icon>;
+const AlertTriangle = (p) => <Icon {...p}><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></Icon>;
+const CheckCircle2 = (p) => <Icon {...p}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></Icon>;
+const XCircle = (p) => <Icon {...p}><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></Icon>;
+const Target = (p) => <Icon {...p}><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></Icon>;
+const ShieldAlert = (p) => <Icon {...p}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></Icon>;
+const Gauge = (p) => <Icon {...p}><path d="M12 14l4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/></Icon>;
+const RefreshCw = (p) => <Icon {...p}><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></Icon>;
+const Loader2 = (p) => <Icon {...p} style={{...(p.style||{})}}><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></Icon>;
+const Key = (p) => <Icon {...p}><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></Icon>;
+
+function App() {
+  const [price, setPrice] = useState("2358.40");
+  const [ema9, setEma9] = useState("2358.10");
+  const [ema21, setEma21] = useState("2357.20");
+  const [rsi, setRsi] = useState("58");
+  const [swingHigh, setSwingHigh] = useState("2360.50");
+  const [swingLow, setSwingLow] = useState("2355.80");
+  const [pattern, setPattern] = useState("none");
+  const [spread, setSpread] = useState("25");
+  const [range, setRange] = useState("2.50");
+  const [rr, setRr] = useState("1.5");
+
+  const [apiKey, setApiKey] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [fetchError, setFetchError] = useState("");
+  const [lastFetched, setLastFetched] = useState(null);
+
+  function detectPattern(candles) {
+    if (!candles || candles.length < 2) return "none";
+    const c0 = candles[0], c1 = candles[1];
+    const body0 = Math.abs(c0.close - c0.open);
+    const range0 = c0.high - c0.low || 0.0001;
+    const upperWick = c0.high - Math.max(c0.open, c0.close);
+    const lowerWick = Math.min(c0.open, c0.close) - c0.low;
+    const bullish0 = c0.close > c0.open;
+    const bullish1 = c1.close > c1.open;
+    const body1 = Math.abs(c1.close - c1.open);
+
+    if (bullish0 && !bullish1 && c0.close > c1.open && c0.open < c1.close && body0 > body1) return "bullish_engulfing";
+    if (!bullish0 && bullish1 && c0.open > c1.close && c0.close < c1.open && body0 > body1) return "bearish_engulfing";
+    if (body0 / range0 < 0.12) return "doji";
+    if (lowerWick > body0 * 2 && upperWick < body0 * 0.6) return "hammer";
+    if (upperWick > body0 * 2 && lowerWick < body0 * 0.6) return "shooting_star";
+    return "none";
+  }
+
+  async function fetchLiveData() {
+    if (!apiKey.trim()) { setFetchError("Masukkan API key Twelve Data dulu."); return; }
+    setLoading(true); setFetchError("");
+    try {
+      const base = "https://api.twelvedata.com";
+      const symbol = "XAU/USD";
+      const [priceRes, ema9Res, ema21Res, rsiRes, seriesRes] = await Promise.all([
+        fetch(`${base}/price?symbol=${symbol}&apikey=${apiKey}`),
+        fetch(`${base}/ema?symbol=${symbol}&interval=1min&time_period=9&apikey=${apiKey}`),
+        fetch(`${base}/ema?symbol=${symbol}&interval=1min&time_period=21&apikey=${apiKey}`),
+        fetch(`${base}/rsi?symbol=${symbol}&interval=1min&time_period=14&apikey=${apiKey}`),
+        fetch(`${base}/time_series?symbol=${symbol}&interval=1min&outputsize=25&apikey=${apiKey}`),
+      ]);
+      const [priceJson, ema9Json, ema21Json, rsiJson, seriesJson] = await Promise.all(
+        [priceRes, ema9Res, ema21Res, rsiRes, seriesRes].map(r => r.json())
+      );
+      for (const j of [priceJson, ema9Json, ema21Json, rsiJson, seriesJson]) {
+        if (j.status === "error" || j.code) throw new Error(j.message || "API menolak permintaan (cek API key / kuota).");
+      }
+      if (priceJson.price) setPrice(parseFloat(priceJson.price).toFixed(2));
+      if (ema9Json.values && ema9Json.values[0]) setEma9(parseFloat(ema9Json.values[0].ema).toFixed(2));
+      if (ema21Json.values && ema21Json.values[0]) setEma21(parseFloat(ema21Json.values[0].ema).toFixed(2));
+      if (rsiJson.values && rsiJson.values[0]) setRsi(Math.round(parseFloat(rsiJson.values[0].rsi)).toString());
+      if (seriesJson.values && seriesJson.values.length > 5) {
+        const candles = seriesJson.values.map(v => ({ open: +v.open, high: +v.high, low: +v.low, close: +v.close }));
+        const last20 = candles.slice(0, 20);
+        setSwingHigh(Math.max(...last20.map(c => c.high)).toFixed(2));
+        setSwingLow(Math.min(...last20.map(c => c.low)).toFixed(2));
+        const ranges = last20.slice(0, 10).map(c => c.high - c.low);
+        setRange((ranges.reduce((a,b)=>a+b,0)/ranges.length).toFixed(2));
+        setPattern(detectPattern(candles));
+      }
+      setLastFetched(new Date());
+    } catch (err) {
+      setFetchError(err.message || "Gagal mengambil data. Coba lagi atau isi manual di bawah.");
+    } finally { setLoading(false); }
+  }
+
+  const result = useMemo(() => {
+    const p = parseFloat(price) || 0, e9 = parseFloat(ema9) || 0, e21 = parseFloat(ema21) || 0;
+    const r = parseFloat(rsi), sh = parseFloat(swingHigh), sl = parseFloat(swingLow);
+    const sp = parseFloat(spread), rng = parseFloat(range), rrRatio = parseFloat(rr) || 1;
+    const reasons = []; let score = 0;
+
+    if (e9 && e21) {
+      if (e9 > e21) { score += 25; reasons.push({ ok: true, text: `Tren naik — EMA9 (${fmt(e9)}) di atas EMA21 (${fmt(e21)})` }); }
+      else if (e9 < e21) { score -= 25; reasons.push({ ok: false, text: `Tren turun — EMA9 (${fmt(e9)}) di bawah EMA21 (${fmt(e21)})` }); }
+      else reasons.push({ ok: null, text: "EMA9 dan EMA21 berhimpit — tren belum jelas" });
+    }
+    if (p && e9) {
+      if (p > e9) { score += 10; reasons.push({ ok: true, text: `Harga (${fmt(p)}) di atas EMA9 — momentum jangka pendek mendukung beli` }); }
+      else if (p < e9) { score -= 10; reasons.push({ ok: false, text: `Harga (${fmt(p)}) di bawah EMA9 — momentum jangka pendek mendukung jual` }); }
+    }
+    if (!Number.isNaN(r)) {
+      if (r >= 70) { score -= 18; reasons.push({ ok: false, text: `RSI ${fmt(r,0)} — overbought, waspada koreksi/reversal` }); }
+      else if (r <= 30) { score += 18; reasons.push({ ok: true, text: `RSI ${fmt(r,0)} — oversold, waspada bounce` }); }
+      else if (r > 50) { score += 10; reasons.push({ ok: true, text: `RSI ${fmt(r,0)} — momentum sisi beli` }); }
+      else if (r < 50) { score -= 10; reasons.push({ ok: false, text: `RSI ${fmt(r,0)} — momentum sisi jual` }); }
+      else reasons.push({ ok: null, text: `RSI ${fmt(r,0)} — netral` });
+    }
+    if (p && sh && sl && sh > sl) {
+      const posPct = (p - sl) / (sh - sl);
+      if (posPct <= 0.25) { score += 15; reasons.push({ ok: true, text: "Harga dekat support (swing low) — area entry beli lebih menarik" }); }
+      else if (posPct >= 0.75) { score -= 15; reasons.push({ ok: false, text: "Harga dekat resistance (swing high) — area entry jual lebih menarik" }); }
+      else reasons.push({ ok: null, text: "Harga di tengah range — belum di area S/R yang jelas" });
+    }
+    const pat = CANDLE_PATTERNS.find(c => c.value === pattern);
+    if (pat && pat.score !== 0) { score += pat.score; reasons.push({ ok: pat.score > 0, text: `Pola candle: ${pat.label}` }); }
+    else if (pattern === "doji") reasons.push({ ok: null, text: "Pola candle Doji — sinyal ragu, sebaiknya tunggu konfirmasi" });
+
+    let spreadWarning = false;
+    if (!Number.isNaN(sp) && sp > 30) { spreadWarning = true; reasons.push({ ok: false, text: `Spread ${fmt(sp,0)} poin tergolong lebar untuk scalping M1 — biaya masuk lebih berat` }); }
+    else if (!Number.isNaN(sp)) reasons.push({ ok: true, text: `Spread ${fmt(sp,0)} poin — wajar untuk scalping M1` });
+
+    score = clamp(score, -100, 100);
+    let signal = "TUNGGU";
+    if (score >= 35) signal = "BUY"; else if (score <= -35) signal = "SELL";
+    let confidence = clamp(Math.abs(score), 0, 100);
+    if (spreadWarning) confidence = clamp(confidence - 15, 0, 100);
+
+    let entry = null, stopLoss = null, takeProfit = null;
+    if (p && rng) {
+      entry = p;
+      if (signal === "BUY") { stopLoss = p - rng; takeProfit = p + rng * rrRatio; }
+      else if (signal === "SELL") { stopLoss = p + rng; takeProfit = p - rng * rrRatio; }
+    }
+    return { score, signal, confidence, reasons, entry, stopLoss, takeProfit };
+  }, [price, ema9, ema21, rsi, swingHigh, swingLow, pattern, spread, range, rr]);
+
+  const needlePct = ((result.score + 100) / 200) * 100;
+  const signalColor = result.signal === "BUY" ? "#4F9D69" : result.signal === "SELL" ? "#C1443B" : "#9C9384";
+  const signalBg = result.signal === "BUY" ? "rgba(79,157,105,0.12)" : result.signal === "SELL" ? "rgba(193,68,59,0.12)" : "rgba(156,147,132,0.12)";
+  const SignalIcon = result.signal === "BUY" ? TrendingUp : result.signal === "SELL" ? TrendingDown : MinusIcon;
+
+  return (
+    <div style={{ minHeight: "100vh", background: "#12100D", fontFamily: "'Inter', sans-serif", color: "#E9E4D8" }}>
+      <div style={{ borderBottom: "1px solid #302A1F", padding: "22px 24px 20px" }}>
+        <div style={{ fontFamily: "'Oswald', sans-serif", fontSize: 11, letterSpacing: "0.16em", color: "#D4AF37", marginBottom: 6 }}>GOLD SCALPING INSTRUMENT</div>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
+          <h1 style={{ fontFamily: "'Oswald', sans-serif", fontWeight: 600, fontSize: 26, margin: 0, letterSpacing: "0.02em" }}>XAUUSD — M1 ENTRY SCANNER</h1>
+          <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: "#9C9384" }}>timeframe 1 menit</span>
+        </div>
+        <p style={{ color: "#9C9384", fontSize: 13, marginTop: 8, maxWidth: 640, lineHeight: 1.5 }}>
+          Ambil data otomatis atau isi manual, lihat chart live, dan dapatkan estimasi waktu entry berdasarkan skor konfluensi.
+        </p>
+      </div>
+
+      <div className="xg-layout" style={{ display: "grid", gridTemplateColumns: "340px 1fr", gap: 0 }}>
+        <div style={{ borderRight: "1px solid #302A1F", padding: "24px" }}>
+          <div style={{ marginBottom: 26, background: "#1C1914", border: "1px solid #302A1F", borderRadius: 6, padding: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 10 }}>
+              <Key size={13} color="#D4AF37" />
+              <span className="xg-group-title" style={{ border: "none", padding: 0, margin: 0 }}>Ambil Data Live</span>
+            </div>
+            <label className="xg-label">API key Twelve Data (gratis)</label>
+            <input className="xg-field" type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="tempel API key di sini" style={{ marginBottom: 10 }} />
+            <button onClick={fetchLiveData} disabled={loading} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, background: loading ? "#302A1F" : "#D4AF37", color: loading ? "#9C9384" : "#12100D", border: "none", borderRadius: 4, padding: "9px 0", fontFamily: "'Oswald', sans-serif", fontSize: 12, letterSpacing: "0.06em", textTransform: "uppercase", cursor: loading ? "default" : "pointer" }}>
+              {loading ? <Loader2 size={14} className="xg-spin" /> : <RefreshCw size={14} />}
+              {loading ? "Mengambil data..." : "Ambil Harga, EMA, RSI, S/R"}
+            </button>
+            {fetchError && <div style={{ marginTop: 10, fontSize: 12, color: "#C1443B", lineHeight: 1.4 }}>{fetchError}</div>}
+            {lastFetched && !fetchError && <div style={{ marginTop: 10, fontSize: 11, color: "#4F9D69" }}>Diperbarui {lastFetched.toLocaleTimeString("id-ID")}</div>}
+            <div style={{ marginTop: 10, fontSize: 11, color: "#6B6656", lineHeight: 1.4 }}>Belum punya key? Daftar gratis di twelvedata.com.</div>
+          </div>
+
+          <div style={{ marginBottom: 26 }}>
+            <div className="xg-group-title">Harga &amp; Tren</div>
+            <div style={{ display: "grid", gap: 12 }}>
+              <div><label className="xg-label">Harga saat ini</label><input className="xg-field" type="number" step="0.01" value={price} onChange={e => setPrice(e.target.value)} /></div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <div><label className="xg-label">EMA 9</label><input className="xg-field" type="number" step="0.01" value={ema9} onChange={e => setEma9(e.target.value)} /></div>
+                <div><label className="xg-label">EMA 21</label><input className="xg-field" type="number" step="0.01" value={ema21} onChange={e => setEma21(e.target.value)} /></div>
+              </div>
+            </div>
+          </div>
+
+          <div style={{ marginBottom: 26 }}>
+            <div className="xg-group-title">Momentum</div>
+            <label className="xg-label">RSI (14)</label>
+            <input className="xg-field" type="number" step="1" value={rsi} onChange={e => setRsi(e.target.value)} placeholder="0–100" />
+          </div>
+
+          <div style={{ marginBottom: 26 }}>
+            <div className="xg-group-title">Level &amp; Pola</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+              <div><label className="xg-label">Swing High</label><input className="xg-field" type="number" step="0.01" value={swingHigh} onChange={e => setSwingHigh(e.target.value)} /></div>
+              <div><label className="xg-label">Swing Low</label><input className="xg-field" type="number" step="0.01" value={swingLow} onChange={e => setSwingLow(e.target.value)} /></div>
+            </div>
+            <label className="xg-label">Pola candle terakhir</label>
+            <select className="xg-field" value={pattern} onChange={e => setPattern(e.target.value)}>
+              {CANDLE_PATTERNS.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+            </select>
+          </div>
+
+          <div>
+            <div className="xg-group-title">Risiko</div>
+            <div style={{ display: "grid", gap: 12 }}>
+              <div><label className="xg-label">Spread (poin)</label><input className="xg-field" type="number" step="1" value={spread} onChange={e => setSpread(e.target.value)} /></div>
+              <div><label className="xg-label">Range/ATR M1 terakhir ($)</label><input className="xg-field" type="number" step="0.01" value={range} onChange={e => setRange(e.target.value)} /></div>
+              <div><label className="xg-label">Rasio Risk : Reward</label><input className="xg-field" type="number" step="0.1" value={rr} onChange={e => setRr(e.target.value)} /></div>
+            </div>
+          </div>
+        </div>
+
+        <div style={{ padding: "24px 28px" }}>
+          <div style={{ marginBottom: 26, border: "1px solid #302A1F", borderRadius: 6, overflow: "hidden", height: 320 }}>
+            <iframe title="TradingView XAUUSD M1" src="https://s.tradingview.com/widgetembed/?frameElementId=tv_xau&symbol=OANDA%3AXAUUSD&interval=1&theme=dark&style=1&timezone=Etc%2FUTC&hide_top_toolbar=0&hide_legend=0&saveimage=0&toolbarbg=1C1914" style={{ width: "100%", height: "100%", border: "none" }} allowtransparency="true" />
+          </div>
+
+          <div style={{ marginBottom: 26 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
+              <Gauge size={15} color="#D4AF37" />
+              <span className="xg-group-title" style={{ border: "none", padding: 0, margin: 0 }}>Skala Konfluensi</span>
+            </div>
+            <div style={{ position: "relative", height: 10, borderRadius: 6, background: "linear-gradient(90deg, #C1443B 0%, #3A3428 48%, #3A3428 52%, #4F9D69 100%)" }}>
+              <div style={{ position: "absolute", left: `calc(${needlePct}% - 2px)`, top: -6, width: 4, height: 22, background: "#F2C94C", borderRadius: 2, boxShadow: "0 0 8px rgba(242,201,76,0.7)", transition: "left 0.25s ease" }} />
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8, fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: "#9C9384" }}>
+              <span>SELL</span><span>TUNGGU</span><span>BUY</span>
+            </div>
+          </div>
+
+          <div style={{ background: signalBg, border: `1px solid ${signalColor}55`, borderRadius: 6, padding: "20px 22px", marginBottom: 22, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+              <SignalIcon size={30} color={signalColor} />
+              <div>
+                <div style={{ fontFamily: "'Oswald', sans-serif", fontSize: 26, fontWeight: 600, color: signalColor, letterSpacing: "0.03em" }}>{result.signal}</div>
+                <div style={{ fontSize: 12, color: "#9C9384" }}>Skor konfluensi: {result.score}/100</div>
+              </div>
+            </div>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 22, color: signalColor }}>{fmt(result.confidence, 0)}%</div>
+              <div style={{ fontSize: 11, color: "#9C9384" }}>keyakinan</div>
+            </div>
+          </div>
+
+          {result.signal !== "TUNGGU" && result.entry && (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 24 }}>
+              <div style={{ background: "#1C1914", border: "1px solid #302A1F", borderRadius: 6, padding: "12px 14px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}><Target size={13} color="#D4AF37" /><span style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "#9C9384" }}>Entry</span></div>
+                <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 17 }}>{fmt(result.entry)}</div>
+              </div>
+              <div style={{ background: "#1C1914", border: "1px solid #302A1F", borderRadius: 6, padding: "12px 14px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}><ShieldAlert size={13} color="#C1443B" /><span style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "#9C9384" }}>Stop Loss</span></div>
+                <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 17, color: "#C1443B" }}>{fmt(result.stopLoss)}</div>
+              </div>
+              <div style={{ background: "#1C1914", border: "1px solid #302A1F", borderRadius: 6, padding: "12px 14px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}><Target size={13} color="#4F9D69" /><span style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "#9C9384" }}>Take Profit</span></div>
+                <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 17, color: "#4F9D69" }}>{fmt(result.takeProfit)}</div>
+              </div>
+            </div>
+          )}
+
+          {result.signal === "TUNGGU" && (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#9C9384", fontSize: 13, marginBottom: 24, background: "#1C1914", border: "1px solid #302A1F", borderRadius: 6, padding: "12px 14px" }}>
+              <AlertTriangle size={15} color="#D4AF37" />
+              Konfluensi belum cukup kuat — sebaiknya tunggu sinyal lebih jelas sebelum entry di M1.
+            </div>
+          )}
+
+          <div>
+            <div className="xg-group-title">Rincian Analisa</div>
+            <div style={{ display: "grid", gap: 8 }}>
+              {result.reasons.map((r, i) => {
+                const IconC = r.ok === true ? CheckCircle2 : r.ok === false ? XCircle : MinusIcon;
+                const color = r.ok === true ? "#4F9D69" : r.ok === false ? "#C1443B" : "#9C9384";
+                return (
+                  <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 9, fontSize: 13, lineHeight: 1.4, color: "#CFC9BA" }}>
+                    <IconC size={15} color={color} style={{ flexShrink: 0, marginTop: 1 }} />
+                    <span>{r.text}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div style={{ marginTop: 28, paddingTop: 16, borderTop: "1px solid #302A1F", fontSize: 11, color: "#6B6656", lineHeight: 1.5 }}>
+            Alat bantu analisa teknikal, bukan nasihat keuangan. Selalu gunakan manajemen risiko dan ukuran lot yang sesuai toleransi risiko Anda.
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
