@@ -1,0 +1,2 @@
+# Xauusd-Scanner
+XAUUSD
